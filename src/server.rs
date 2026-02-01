@@ -20,10 +20,10 @@ pub struct McpServer {
 }
 
 impl McpServer {
-    pub fn new(bridge: Bridge) -> Self {
+    pub fn new(bridge: Bridge, engine_url: String) -> Self {
         Self {
             initialize_handler: InitializeHandler::new("iii-mcp", env!("CARGO_PKG_VERSION")),
-            tools_handler: ToolsHandler::new(bridge.clone()),
+            tools_handler: ToolsHandler::new(bridge.clone(), engine_url),
             resources_handler: ResourcesHandler::new(bridge),
             initialized: AtomicBool::new(false),
         }
@@ -36,7 +36,6 @@ impl McpServer {
         tracing::debug!(method = %method, "Handling MCP request");
 
         let result = match method {
-            // Lifecycle
             "initialize" => {
                 self.initialized.store(true, Ordering::SeqCst);
                 Ok(self.initialize_handler.handle(request.params))

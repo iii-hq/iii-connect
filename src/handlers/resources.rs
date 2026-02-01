@@ -54,7 +54,6 @@ impl ResourcesHandler {
     }
 
     pub async fn list(&self) -> Value {
-        // Define static resources that expose iii-engine data
         let resources = vec![
             McpResource {
                 uri: "iii://functions".to_string(),

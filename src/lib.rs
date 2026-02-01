@@ -8,6 +8,8 @@ pub mod handlers;
 pub mod json_rpc;
 pub mod server;
 pub mod transport;
+pub mod worker_manager;
 
 pub use server::McpServer;
 pub use transport::StdioTransport;
+pub use worker_manager::WorkerManager;

@@ -4,16 +4,11 @@
 // This software is patent protected. We welcome discussions - reach out at support@motia.dev
 // See LICENSE and PATENTS files for details.
 
-//! iii-mcp: MCP (Model Context Protocol) server for iii-engine
-//!
-//! This standalone binary connects to iii-engine and exposes its capabilities
-//! through the MCP protocol, allowing AI assistants like Claude and Cursor
-//! to interact with iii-engine functions, state, events, and more.
-
 mod handlers;
 mod json_rpc;
 mod server;
 mod transport;
+mod worker_manager;
 
 use std::sync::Arc;
 
@@ -44,13 +39,13 @@ Usage with Claude Desktop:
     "mcpServers": {
       "iii": {
         "command": "iii-mcp",
-        "args": ["--engine-url", "ws://localhost:8080"]
+        "args": ["--engine-url", "ws://localhost:49134"]
       }
     }
   }
 "#)]
 struct Args {
-    #[arg(long, short = 'e', default_value = "ws://localhost:8080")]
+    #[arg(long, short = 'e', default_value = "ws://localhost:49134")]
     engine_url: String,
 
     #[arg(long, short = 'd')]
@@ -84,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
     bridge.connect().await?;
     tracing::info!("Connected to iii-engine");
 
-    let server = Arc::new(McpServer::new(bridge));
+    let server = Arc::new(McpServer::new(bridge, args.engine_url.clone()));
 
     StdioTransport::run(server).await?;
 

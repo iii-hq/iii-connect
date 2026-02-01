@@ -54,10 +54,10 @@ cargo build --release
 
 ```bash
 # Connect to local iii-engine
-cargo run -- --engine-url ws://localhost:8080
+cargo run -- --engine-url ws://localhost:49134
 
 # With debug logging
-cargo run -- --engine-url ws://localhost:8080 --debug
+cargo run -- --engine-url ws://localhost:49134 --debug
 ```
 
 ## Architecture Overview
@@ -166,7 +166,7 @@ cargo test -- --nocapture
 cargo build --release
 
 # Test with MCP Inspector
-npx @anthropic/mcp-inspector ./target/release/iii-mcp --engine-url ws://localhost:8080
+npx @anthropic/mcp-inspector ./target/release/iii-mcp --engine-url ws://localhost:49134
 ```
 
 ### Testing with Claude Desktop
@@ -178,7 +178,7 @@ npx @anthropic/mcp-inspector ./target/release/iii-mcp --engine-url ws://localhos
      "mcpServers": {
        "iii-test": {
          "command": "/path/to/target/release/iii-mcp",
-         "args": ["--engine-url", "ws://localhost:8080", "--debug"]
+         "args": ["--engine-url", "ws://localhost:49134", "--debug"]
        }
      }
    }

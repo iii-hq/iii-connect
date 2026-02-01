@@ -4,7 +4,13 @@ MCP (Model Context Protocol) server for [iii-engine](https://github.com/MotiaDev
 
 ## Overview
 
-`iii-mcp` is a standalone Rust binary that connects to an iii-engine instance and exposes its capabilities through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). This allows AI assistants like Claude Desktop, Cursor, and VS Code Copilot to interact with iii-engine using natural language.
+`iii-mcp` is a standalone Rust binary that connects to an iii-engine instance and exposes its capabilities through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). This allows AI assistants like Claude Desktop, Cursor, and VS Code Copilot to interact with iii-engine's three core primitives:
+
+- **Worker** — Who runs code
+- **Function** — What code runs  
+- **Trigger** — What causes code to run
+
+AI agents can create workers on-demand, invoke functions, and register triggers — all without user intervention.
 
 ## Architecture
 
@@ -13,34 +19,79 @@ flowchart LR
     subgraph clients [MCP Clients]
         Claude[Claude Desktop]
         Cursor[Cursor IDE]
-        VSCode["VS Code Copilot"]
-        Other[Other MCP Clients]
     end
 
-    subgraph mcpBinary [iii-mcp Binary]
-        McpServer[MCP Server]
-        JsonRpc[JSON-RPC 2.0]
-        Bridge[iii-sdk Bridge]
+    subgraph mcpBinary [iii-mcp]
+        MCP[MCP Server]
+        WM[Worker Manager]
     end
 
-    subgraph engine [iii-engine]
-        Functions[FunctionsRegistry]
-        Workers[WorkerRegistry]
-        Triggers[TriggerRegistry]
-    end
+    Engine[iii-engine]
+    TempWorker[Temp Worker]
 
-    Claude -->|stdio| McpServer
-    Cursor -->|stdio| McpServer
-    VSCode -->|stdio| McpServer
-    Other -->|stdio| McpServer
-    McpServer --> JsonRpc
-    JsonRpc --> Bridge
-    Bridge -->|WebSocket| Functions
-    Bridge -->|WebSocket| Workers
-    Bridge -->|WebSocket| Triggers
+    Claude -->|MCP| MCP
+    Cursor -->|MCP| MCP
+    MCP -->|invoke| Engine
+    MCP -->|register trigger| Engine
+    WM -->|spawn| TempWorker
+    TempWorker -->|connects| Engine
 ```
 
-### MCP Tools
+## The Three Primitives
+
+iii-engine is built on three core primitives:
+
+| Primitive | What it is | MCP Tools |
+|-----------|------------|-----------|
+| **Worker** | Who runs code | `iii_worker_create`, `iii_worker_stop` |
+| **Function** | What code runs | `tools/call` (invoke any function) |
+| **Trigger** | What causes code to run | `iii_trigger_register`, `iii_trigger_unregister` |
+
+```mermaid
+flowchart LR
+    Trigger[Trigger] -->|causes| Function[Function]
+    Function -->|runs on| Worker[Worker]
+```
+
+### Worker — Who Runs Code
+
+Workers are processes that connect to iii-engine and register functions they can execute.
+
+```
+iii_worker_create   → Create a temp worker with custom code
+iii_worker_stop     → Stop and cleanup a worker
+```
+
+### Function — What Code Runs
+
+Functions are the units of work. Each function has a path (e.g., `myservice.process_order`) and runs on a worker.
+
+```
+tools/call          → Invoke any registered function
+tools/list          → List all available functions
+```
+
+### Trigger — What Causes Code to Run
+
+Triggers wire up automation: "when X happens, call function Y".
+
+```
+iii_trigger_register    → Register a trigger (cron, event, http, etc.)
+iii_trigger_unregister  → Remove a trigger
+```
+
+## MCP Tools
+
+### Built-in Tools (Core Primitives)
+
+| Tool | Primitive | Description |
+|------|-----------|-------------|
+| `iii_worker_create` | Worker | Create a temporary worker with custom function code |
+| `iii_worker_stop` | Worker | Stop a spawned worker and clean up |
+| `iii_trigger_register` | Trigger | Register a trigger to invoke a function |
+| `iii_trigger_unregister` | Trigger | Remove a registered trigger |
+
+### iii-engine Functions
 
 All iii-engine functions are automatically exposed as MCP tools:
 
@@ -115,14 +166,14 @@ cargo install --path .
 ### Command Line
 
 ```bash
-# Connect to local iii-engine (default: ws://localhost:8080)
+# Connect to local iii-engine (default: ws://localhost:49134)
 iii-mcp
 
 # Connect to a specific iii-engine instance
 iii-mcp --engine-url ws://192.168.1.100:8080
 
 # With debug logging (logs to stderr)
-iii-mcp --engine-url ws://localhost:8080 --debug
+iii-mcp --engine-url ws://localhost:49134 --debug
 ```
 
 ### CLI Options
@@ -131,7 +182,7 @@ iii-mcp --engine-url ws://localhost:8080 --debug
 Usage: iii-mcp [OPTIONS]
 
 Options:
-  -e, --engine-url <ENGINE_URL>  iii-engine WebSocket URL [default: ws://localhost:8080]
+  -e, --engine-url <ENGINE_URL>  iii-engine WebSocket URL [default: ws://localhost:49134]
   -d, --debug                    Enable debug logging
   -h, --help                     Print help
   -V, --version                  Print version
@@ -148,7 +199,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
   "mcpServers": {
     "iii": {
       "command": "/path/to/iii-mcp",
-      "args": ["--engine-url", "ws://localhost:8080"]
+      "args": ["--engine-url", "ws://localhost:49134"]
     }
   }
 }
@@ -163,7 +214,7 @@ Add to your Cursor MCP configuration:
   "mcpServers": {
     "iii": {
       "command": "/path/to/iii-mcp",
-      "args": ["--engine-url", "ws://localhost:8080"]
+      "args": ["--engine-url", "ws://localhost:49134"]
     }
   }
 }
@@ -239,25 +290,60 @@ Connected workers:
    - Active invocations: 1
 ```
 
+### Create a Function On-Demand
+
+**User:** "I need a function that returns the current timestamp"
+
+**AI:** *calls `iii_worker_create` tool*
+```json
+{
+  "name": "iii_worker_create",
+  "arguments": {
+    "language": "node",
+    "function_name": "utils.timestamp",
+    "code": "async (args) => ({ timestamp: Date.now(), iso: new Date().toISOString() })",
+    "description": "Returns current timestamp"
+  }
+}
+```
+→ Worker created, function `utils.timestamp` is now available
+
+### Register a Trigger
+
+**User:** "Call the cleanup function every hour"
+
+**AI:** *calls `iii_trigger_register` tool*
+```json
+{
+  "name": "iii_trigger_register",
+  "arguments": {
+    "trigger_type": "cron",
+    "function_path": "maintenance.cleanup",
+    "config": { "schedule": "0 * * * *" }
+  }
+}
+```
+→ Trigger registered, function will be called hourly
+
 ## Testing
 
 ### Using MCP Inspector
 
 ```bash
-npx @anthropic/mcp-inspector ./target/release/iii-mcp --engine-url ws://localhost:8080
+npx @anthropic/mcp-inspector ./target/release/iii-mcp --engine-url ws://localhost:49134
 ```
 
 ### Manual Testing
 
 ```bash
 # Start iii-mcp
-./target/release/iii-mcp --engine-url ws://localhost:8080
+./target/release/iii-mcp --engine-url ws://localhost:49134
 
 # Send initialize request (in another terminal)
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test"}}}' | nc localhost 8080
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test"}}}' | nc localhost 49134
 
 # List tools
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | nc localhost 8080
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | nc localhost 49134
 ```
 
 ## Project Structure
@@ -274,8 +360,10 @@ iii-mcp/
     ├── handlers/
     │   ├── mod.rs          # Handler exports
     │   ├── initialize.rs   # MCP initialization
-    │   ├── tools.rs        # tools/list, tools/call
+    │   ├── tools.rs        # tools/list, tools/call + core primitives
     │   └── resources.rs    # resources/list, resources/read
+    ├── worker_manager/
+    │   └── mod.rs          # Spawn/stop temp workers
     └── transport/
         ├── mod.rs          # Transport exports
         └── stdio.rs        # stdio transport implementation
