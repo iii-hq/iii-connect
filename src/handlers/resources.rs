@@ -160,6 +160,10 @@ impl ResourcesHandler {
                         "tracing": {
                             "description": "Distributed tracing and baggage",
                             "tools": ["engine_baggage_get", "engine_baggage_set", "engine_baggage_getAll"]
+                        },
+                        "streams": {
+                            "description": "Real-time WebSocket data",
+                            "tools": ["streams_get", "streams_set", "streams_delete", "streams_update", "streams_list", "streams_getGroup", "streams_listGroups"]
                         }
                     }
                 });

@@ -93,6 +93,7 @@ flowchart TD
     Context --> State[State]
     Context --> Events[Events]
     Context --> Tracing[Tracing]
+    Context --> Streams[Streams]
 ```
 
 | Context Capability | Available Tools |
@@ -101,6 +102,7 @@ flowchart TD
 | **State** | `state_get`, `state_set`, `state_delete`, `state_update`, `state_list` |
 | **Events** | `emit`, `publish` |
 | **Tracing** | `engine_baggage_get`, `engine_baggage_set`, `engine_baggage_getAll` |
+| **Streams** | `streams_get`, `streams_set`, `streams_delete`, `streams_update`, `streams_list`, `streams_getGroup`, `streams_listGroups` |
 
 ## MCP Tools
 
