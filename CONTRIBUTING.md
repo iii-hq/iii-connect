@@ -1,19 +1,16 @@
-# Contributing to III Engine
+# Contributing to iii-mcp
 
-Thank you for your interest in contributing to iii Engine! This document provides guidelines and information to help you contribute effectively.
+Thank you for your interest in contributing to iii-mcp! This document provides guidelines to help you contribute effectively.
 
 ## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
+- [Architecture Overview](#architecture-overview)
 - [Development Workflow](#development-workflow)
-- [Code Style](#code-style)
 - [Testing](#testing)
 - [Pull Request Process](#pull-request-process)
-- [License Headers](#license-headers)
-- [Project Structure](#project-structure)
-- [SDK Contributions](#sdk-contributions)
 - [Reporting Issues](#reporting-issues)
 
 ## Code of Conduct
@@ -24,23 +21,15 @@ We are committed to providing a welcoming and inclusive experience for everyone.
 
 ### Prerequisites
 
-- **Rust 1.80+** - Install via [rustup](https://rustup.rs/)
-- **Redis** (optional) - Required for event bus, state, and cron modules
-- **RabbitMQ** (optional) - Alternative event bus adapter
-- **pre-commit** - For Git hooks (`pip install pre-commit`)
+- **Rust 1.75+** - Install via [rustup](https://rustup.rs/)
+- **iii-engine** - A running iii-engine instance for testing
 
-### Fork and Clone
+### Clone the Repository
 
-1. Fork the repository on GitHub
-2. Clone your fork:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/iii-engine.git
-   cd iii-engine
-   ```
-3. Add upstream remote:
-   ```bash
-   git remote add upstream https://github.com/MotiaDev/iii-engine.git
-   ```
+```bash
+git clone https://github.com/MotiaDev/iii-mcp.git
+cd iii-mcp
+```
 
 ## Development Setup
 
@@ -49,12 +38,6 @@ We are committed to providing a welcoming and inclusive experience for everyone.
 ```bash
 # Install Rust toolchain components
 rustup component add rustfmt clippy
-
-# Install pre-commit hooks
-pre-commit install
-
-# Install Hawkeye for license header management (cross-platform)
-cargo install hawkeye
 ```
 
 ### Build the Project
@@ -65,86 +48,101 @@ cargo build
 
 # Release build
 cargo build --release
-
-# Build for specific target
-cargo build --release --target x86_64-unknown-linux-gnu
 ```
 
-### Run the Engine
+### Run iii-mcp
 
 ```bash
-# With default config
-cargo run -- --config config.yaml
+# Connect to local iii-engine
+cargo run -- --engine-url ws://localhost:8080
 
 # With debug logging
-RUST_LOG=debug cargo run -- --config config.yaml
-
-# Watch mode (auto-rebuild on changes)
-make watch-debug
+cargo run -- --engine-url ws://localhost:8080 --debug
 ```
+
+## Architecture Overview
+
+```
+iii-mcp/
+├── src/
+│   ├── main.rs             # CLI entry point
+│   ├── lib.rs              # Library exports
+│   ├── server.rs           # MCP server + request routing
+│   ├── json_rpc.rs         # JSON-RPC 2.0 types (self-contained)
+│   ├── handlers/
+│   │   ├── mod.rs          # Handler exports
+│   │   ├── initialize.rs   # MCP initialization & capabilities
+│   │   ├── tools.rs        # tools/list, tools/call handlers
+│   │   └── resources.rs    # resources/list, resources/read handlers
+│   └── transport/
+│       ├── mod.rs          # Transport exports
+│       └── stdio.rs        # stdio transport for MCP clients
+```
+
+### Key Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| JSON-RPC Handler | `json_rpc.rs` | Self-contained JSON-RPC 2.0 message types |
+| MCP Server | `server.rs` | Routes MCP requests to handlers |
+| Tools Handler | `handlers/tools.rs` | Converts iii-engine functions to MCP tools |
+| Resources Handler | `handlers/resources.rs` | Exposes iii-engine data as MCP resources |
+| stdio Transport | `transport/stdio.rs` | Reads/writes JSON-RPC over stdin/stdout |
+
+### Adding New Features
+
+#### Adding a New MCP Method
+
+1. Add the handler method in the appropriate handler file
+2. Add routing in `server.rs`:
+   ```rust
+   "your/method" => Ok(self.your_handler.method(request.params).await)
+   ```
+
+#### Adding a New Resource
+
+1. Add the resource definition in `handlers/resources.rs`:
+   ```rust
+   McpResource {
+       uri: "iii://your-resource".to_string(),
+       name: "Your Resource".to_string(),
+       description: Some("Description".to_string()),
+       mime_type: Some("application/json".to_string()),
+   }
+   ```
+2. Add the read handler in the `read` method
 
 ## Development Workflow
 
 ### Creating a Feature Branch
 
-Always create a feature branch for your work:
-
 ```bash
 git checkout main
-git pull upstream main
+git pull origin main
 git checkout -b feature/your-feature-name
 ```
 
-### Making Changes
+### Code Style
 
-1. Write your code following the [code style guidelines](#code-style)
-2. Add or update tests as needed
-3. Ensure all tests pass locally
-4. Update documentation if applicable
-
-### Keeping Your Branch Updated
-
-```bash
-git fetch upstream
-git rebase upstream/main
-```
-
-## Code Style
-
-### Formatting and Linting
-
-We enforce strict code quality standards:
+We follow standard Rust conventions:
 
 ```bash
 # Format code
-cargo fmt --all
+cargo fmt
 
-# Check formatting (CI will fail if this fails)
-cargo fmt --all -- --check
-
-# Run linter (all warnings are errors)
-cargo clippy --all-targets --all-features -- -D warnings
+# Run linter
+cargo clippy --all-targets -- -D warnings
 ```
 
-### Pre-commit Hooks
+### Commit Messages
 
-Pre-commit hooks run automatically on each commit:
+Use clear, descriptive commit messages:
 
-- **cargo fmt** - Code formatting
-- **cargo check** - Compilation check
-- **cargo clippy** - Linting with `-D warnings`
-- **YAML validation** - Config file validation
-- **Trailing whitespace** - Cleanup
-
-If a hook fails, fix the issues and try committing again.
-
-### Style Guidelines
-
-- Use meaningful variable and function names
-- Keep functions focused and small
-- Document public APIs with rustdoc comments
-- Prefer `Result` over `panic!` for error handling
-- Use `tracing` for logging, not `println!`
+```
+feat: add prompts/list handler for MCP prompts
+fix: handle connection timeout gracefully
+docs: update README with new configuration options
+```
 
 ## Testing
 
@@ -152,177 +150,80 @@ If a hook fails, fix the issues and try committing again.
 
 ```bash
 # Run all tests
-cargo test --all-features
+cargo test
 
 # Run specific test
 cargo test test_name
 
-# Run tests with output
+# Run with output
 cargo test -- --nocapture
 ```
 
-### Writing Tests
+### Manual Testing with MCP Inspector
 
-- Place unit tests in the same file using `#[cfg(test)]` modules
-- Use `mockall` for mocking dependencies
-- Test both success and error paths
-- Name tests descriptively: `test_function_behavior_when_condition`
+```bash
+# Build release
+cargo build --release
 
-Example:
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_subscribe_adds_to_subscribers() {
-        let adapter = BuiltInPubSubLite::new(None);
-        // ... test implementation
-    }
-}
+# Test with MCP Inspector
+npx @anthropic/mcp-inspector ./target/release/iii-mcp --engine-url ws://localhost:8080
 ```
+
+### Testing with Claude Desktop
+
+1. Build the release binary
+2. Add to Claude Desktop config:
+   ```json
+   {
+     "mcpServers": {
+       "iii-test": {
+         "command": "/path/to/target/release/iii-mcp",
+         "args": ["--engine-url", "ws://localhost:8080", "--debug"]
+       }
+     }
+   }
+   ```
+3. Restart Claude Desktop and test tool invocations
 
 ## Pull Request Process
 
 ### Before Submitting
 
-1. **Rebase on main** - Ensure your branch is up to date
-2. **Run all checks locally**:
-   ```bash
-   cargo fmt --all -- --check
-   cargo clippy --all-targets --all-features -- -D warnings
-   cargo test --all-features
-   hawkeye check
-   ```
-3. **Write a clear commit message** - Describe what and why
+1. **Ensure tests pass**: `cargo test`
+2. **Check formatting**: `cargo fmt --check`
+3. **Run linter**: `cargo clippy --all-targets -- -D warnings`
+4. **Update documentation** if needed
 
 ### PR Guidelines
 
-- **One feature per PR** - Keep PRs focused and reviewable
-- **Link related issues** - Use "Fixes #123" or "Relates to #123"
-- **Describe your changes** - Explain the what, why, and how
-- **Add screenshots** - For UI changes, include before/after
+- **One feature per PR** - Keep PRs focused
+- **Describe your changes** - Explain what and why
+- **Test your changes** - Include test results or screenshots
 - **Be responsive** - Address review feedback promptly
-
-### CI Checks
-
-All PRs must pass:
-
-- **Formatting** - `cargo fmt` check
-- **Linting** - `cargo clippy` with no warnings
-- **Tests** - All tests must pass
-- **License Headers** - Hawkeye validation
-- **Multi-platform builds** - macOS, Windows, Linux
-
-## License Headers
-
-The III Engine core is licensed under **Elastic License 2.0 (ELv2)**. All Rust source files in `src/` and `function-macros/src/` must include the license header.
-
-### Check for Missing Headers
-
-```bash
-# Using Hawkeye CLI
-hawkeye check
-
-# Using Docker (no install required)
-docker run -it --rm -v $(pwd):/github/workspace ghcr.io/korandoru/hawkeye check
-```
-
-### Add Missing Headers
-
-```bash
-# Using Hawkeye CLI
-hawkeye format
-
-# Using Docker
-docker run -it --rm -v $(pwd):/github/workspace ghcr.io/korandoru/hawkeye format
-```
-
-### Header Template
-
-```rust
-// Copyright Motia LLC and/or licensed to Motia LLC under one or more
-// contributor license agreements. Licensed under the Elastic License 2.0;
-// you may not use this file except in compliance with the Elastic License 2.0.
-// This software is patent protected. We welcome discussions - reach out at support@motia.dev
-// See LICENSE and PATENTS files for details.
-```
-
-## Project Structure
-
-```
-iii-engine/
-├── src/                    # Core engine source (ELv2)
-│   ├── main.rs            # CLI entry point
-│   ├── lib.rs             # Library exports
-│   ├── engine/            # Worker management, routing
-│   ├── modules/           # Core modules (event, cron, state, etc.)
-│   ├── builtins/          # Built-in functions (kv, queue, pubsub)
-│   ├── workers/           # Worker trait definitions
-│   └── invocation/        # Invocation lifecycle
-├── function-macros/       # Proc macro library (ELv2)
-├── packages/              # Multi-language SDKs (Apache 2.0)
-│   ├── node/             # Node.js/TypeScript SDK
-│   ├── rust/             # Rust SDK
-│   └── python/           # Python SDK
-├── examples/              # Example implementations
-├── .github/workflows/     # CI/CD pipelines
-├── config.yaml           # Example configuration
-└── Cargo.toml            # Rust package manifest
-```
-
-## SDK Contributions
-
-SDKs are licensed under **Apache 2.0** and do not require ELv2 headers.
-
-### Node.js SDK
-
-```bash
-cd packages/node
-pnpm install
-pnpm build
-pnpm test
-```
-
-### Python SDK
-
-```bash
-cd packages/python/iii
-uv sync
-uv run pytest
-```
-
-### Rust SDK
-
-```bash
-cd packages/rust/iii
-cargo build
-cargo test
-```
 
 ## Reporting Issues
 
 ### Bug Reports
 
 Include:
-- **III Engine version** - `iii --version`
-- **Operating system** - e.g., Ubuntu 22.04, macOS 14, Windows 11
-- **Steps to reproduce** - Minimal example to trigger the bug
-- **Expected behavior** - What should happen
-- **Actual behavior** - What actually happens
-- **Logs** - Relevant error messages or stack traces
+- **iii-mcp version**: `iii-mcp --version`
+- **iii-engine version**: The engine version you're connecting to
+- **Operating system**: e.g., macOS 14, Ubuntu 22.04
+- **Steps to reproduce**: Minimal example
+- **Expected vs actual behavior**
+- **Logs**: Run with `--debug` flag
 
 ### Feature Requests
 
 Include:
-- **Problem statement** - What problem does this solve?
-- **Proposed solution** - How should it work?
-- **Alternatives considered** - Other approaches you've thought of
-- **Use cases** - Who benefits and how?
+- **Use case**: What problem does this solve?
+- **Proposed solution**: How should it work?
+- **MCP specification reference**: Link to relevant MCP docs if applicable
 
 ## Questions?
 
-- Open a [GitHub Discussion](https://github.com/MotiaDev/iii-engine/discussions)
-- Reach out at support@motia.dev
+- Open a [GitHub Issue](https://github.com/MotiaDev/iii-mcp/issues)
+- Check [MCP Documentation](https://modelcontextprotocol.io/)
+- See [iii-engine docs](https://github.com/MotiaDev/iii-engine)
 
-Thank you for contributing to iii Engine!
+Thank you for contributing to iii-mcp!
