@@ -10,7 +10,7 @@ MCP (Model Context Protocol) server for [iii-engine](https://github.com/MotiaDev
 - **Function** — What code runs  
 - **Trigger** — What causes code to run
 
-AI agents can create workers on-demand, invoke functions, and register triggers — all without user intervention.
+AI agents can register workers, invoke functions, and register triggers — all without user intervention.
 
 ## Architecture
 
@@ -33,7 +33,7 @@ flowchart LR
     Cursor -->|MCP| MCP
     MCP -->|invoke| Engine
     MCP -->|register trigger| Engine
-    WM -->|spawn| TempWorker
+    WM -->|register| TempWorker
     TempWorker -->|connects| Engine
 ```
 
@@ -43,7 +43,7 @@ iii-engine is built on three core primitives:
 
 | Primitive | What it is | MCP Tools |
 |-----------|------------|-----------|
-| **Worker** | Who runs code | `iii_worker_create`, `iii_worker_stop` |
+| **Worker** | Who runs code | `iii_worker_register`, `iii_worker_stop` |
 | **Function** | What code runs | `tools/call` (invoke any function) |
 | **Trigger** | What causes code to run | `iii_trigger_register`, `iii_trigger_unregister` |
 | **Context** | What functions have access to | Logger, State, Events, Tracing tools |
@@ -60,7 +60,7 @@ flowchart LR
 Workers are processes that connect to iii-engine and register functions they can execute.
 
 ```
-iii_worker_create   → Create a temp worker with custom code
+iii_worker_register → Register a worker with iii-engine
 iii_worker_stop     → Stop and cleanup a worker
 ```
 
@@ -108,8 +108,8 @@ flowchart TD
 
 | Tool | Primitive | Description |
 |------|-----------|-------------|
-| `iii_worker_create` | Worker | Create a temporary worker with custom function code |
-| `iii_worker_stop` | Worker | Stop a spawned worker and clean up |
+| `iii_worker_register` | Worker | Register a worker with iii-engine |
+| `iii_worker_stop` | Worker | Stop a registered worker and clean up |
 | `iii_trigger_register` | Trigger | Register a trigger to invoke a function |
 | `iii_trigger_unregister` | Trigger | Remove a registered trigger |
 
@@ -313,14 +313,14 @@ Connected workers:
    - Active invocations: 1
 ```
 
-### Create a Function On-Demand
+### Register a Worker
 
-**User:** "I need a function that returns the current timestamp"
+**User:** "Register a worker with a timestamp function"
 
-**AI:** *calls `iii_worker_create` tool*
+**AI:** *calls `iii_worker_register` tool*
 ```json
 {
-  "name": "iii_worker_create",
+  "name": "iii_worker_register",
   "arguments": {
     "language": "node",
     "function_name": "utils.timestamp",
@@ -329,7 +329,7 @@ Connected workers:
   }
 }
 ```
-→ Worker created, function `utils.timestamp` is now available
+→ Worker registered, function `utils.timestamp` is now available
 
 ### Register a Trigger
 
@@ -386,7 +386,7 @@ iii-mcp/
     │   ├── tools.rs        # tools/list, tools/call + core primitives
     │   └── resources.rs    # resources/list, resources/read
     ├── worker_manager/
-    │   └── mod.rs          # Spawn/stop temp workers
+    │   └── mod.rs          # Register/stop workers
     └── transport/
         ├── mod.rs          # Transport exports
         └── stdio.rs        # stdio transport implementation

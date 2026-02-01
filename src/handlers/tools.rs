@@ -103,8 +103,8 @@ impl ToolsHandler {
     fn builtin_tools() -> Vec<McpTool> {
         vec![
             McpTool {
-                name: "iii_worker_create".to_string(),
-                description: Some("Create a temporary worker with custom function code".to_string()),
+                name: "iii_worker_register".to_string(),
+                description: Some("Register a worker with iii-engine".to_string()),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -131,7 +131,7 @@ impl ToolsHandler {
             },
             McpTool {
                 name: "iii_worker_stop".to_string(),
-                description: Some("Stop a spawned worker and clean up".to_string()),
+                description: Some("Stop a registered worker and clean up".to_string()),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -222,7 +222,7 @@ impl ToolsHandler {
         };
 
         match params.name.as_str() {
-            "iii_worker_create" => return self.worker_create(params.arguments).await,
+            "iii_worker_register" => return self.worker_create(params.arguments).await,
             "iii_worker_stop" => return self.worker_stop(params.arguments).await,
             "iii_trigger_register" => return self.trigger_register(params.arguments).await,
             "iii_trigger_unregister" => return self.trigger_unregister(params.arguments).await,
