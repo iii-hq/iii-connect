@@ -73,6 +73,12 @@ impl ResourcesHandler {
                 description: Some("Registered iii-engine triggers".to_string()),
                 mime_type: Some("application/json".to_string()),
             },
+            McpResource {
+                uri: "iii://context".to_string(),
+                name: "Context".to_string(),
+                description: Some("Runtime context available to functions (logging, state, events, tracing)".to_string()),
+                mime_type: Some("application/json".to_string()),
+            },
         ];
 
         json!(ResourcesListResult { resources })
@@ -134,6 +140,32 @@ impl ResourcesHandler {
                         "error": format!("Failed to list triggers: {}", err)
                     });
                 }
+            },
+            "iii://context" => {
+                let context_info = json!({
+                    "description": "Runtime context available to functions during execution",
+                    "capabilities": {
+                        "logger": {
+                            "description": "Logging capabilities",
+                            "tools": ["engine_log_info", "engine_log_debug", "engine_log_warn", "engine_log_error", "engine_log_trace"]
+                        },
+                        "state": {
+                            "description": "Persistent data access",
+                            "tools": ["state_get", "state_set", "state_delete", "state_update", "state_list"]
+                        },
+                        "events": {
+                            "description": "Event publishing",
+                            "tools": ["emit", "publish"]
+                        },
+                        "tracing": {
+                            "description": "Distributed tracing and baggage",
+                            "tools": ["engine_baggage_get", "engine_baggage_set", "engine_baggage_getAll"]
+                        }
+                    }
+                });
+                let text = serde_json::to_string_pretty(&context_info)
+                    .unwrap_or_else(|_| "{}".to_string());
+                (text, "application/json")
             },
             _ => {
                 return json!({

@@ -46,11 +46,13 @@ iii-engine is built on three core primitives:
 | **Worker** | Who runs code | `iii_worker_create`, `iii_worker_stop` |
 | **Function** | What code runs | `tools/call` (invoke any function) |
 | **Trigger** | What causes code to run | `iii_trigger_register`, `iii_trigger_unregister` |
+| **Context** | What functions have access to | Logger, State, Events, Tracing tools |
 
 ```mermaid
 flowchart LR
     Trigger[Trigger] -->|causes| Function[Function]
     Function -->|runs on| Worker[Worker]
+    Function -->|has access to| Context[Context]
 ```
 
 ### Worker — Who Runs Code
@@ -79,6 +81,26 @@ Triggers wire up automation: "when X happens, call function Y".
 iii_trigger_register    → Register a trigger (cron, event, http, etc.)
 iii_trigger_unregister  → Remove a trigger
 ```
+
+### Context — What Functions Have Access To
+
+Context is the runtime environment available to functions during execution. It's nested under Function conceptually — it represents what a function can use when it runs.
+
+```mermaid
+flowchart TD
+    Function[Function] --> Context[Context]
+    Context --> Logger[Logger]
+    Context --> State[State]
+    Context --> Events[Events]
+    Context --> Tracing[Tracing]
+```
+
+| Context Capability | Available Tools |
+|-------------------|-----------------|
+| **Logger** | `engine_log_info`, `engine_log_debug`, `engine_log_warn`, `engine_log_error`, `engine_log_trace` |
+| **State** | `state_get`, `state_set`, `state_delete`, `state_update`, `state_list` |
+| **Events** | `emit`, `publish` |
+| **Tracing** | `engine_baggage_get`, `engine_baggage_set`, `engine_baggage_getAll` |
 
 ## MCP Tools
 
@@ -122,6 +144,7 @@ Read-only access to iii-engine data:
 | `iii://functions` | List of all registered functions |
 | `iii://workers` | Connected workers with metrics |
 | `iii://triggers` | Active triggers |
+| `iii://context` | Runtime context capabilities (logging, state, events, tracing) |
 
 ## Installation
 
