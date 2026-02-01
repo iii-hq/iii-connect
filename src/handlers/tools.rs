@@ -151,7 +151,7 @@ impl ToolsHandler {
                     "properties": {
                         "trigger_type": {
                             "type": "string",
-                            "description": "Trigger type (e.g., 'cron', 'event', 'http')"
+                            "description": "Trigger type (e.g., 'cron', 'event', 'api', 'state')"
                         },
                         "function_path": {
                             "type": "string",

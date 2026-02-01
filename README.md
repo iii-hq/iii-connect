@@ -78,7 +78,7 @@ tools/list          → List all available functions
 Triggers wire up automation: "when X happens, call function Y".
 
 ```
-iii_trigger_register    → Register a trigger (cron, event, http, etc.)
+iii_trigger_register    → Register a trigger (cron, event, api, state)
 iii_trigger_unregister  → Remove a trigger
 ```
 
