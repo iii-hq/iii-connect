@@ -1,15 +1,5 @@
-// Copyright Motia LLC and/or licensed to Motia LLC under one or more
-// contributor license agreements. Licensed under the Elastic License 2.0;
-// you may not use this file except in compliance with the Elastic License 2.0.
-// This software is patent protected. We welcome discussions - reach out at support@motia.dev
-// See LICENSE and PATENTS files for details.
-
-pub mod handlers;
+pub mod a2a;
 pub mod json_rpc;
-pub mod server;
+pub mod mcp;
 pub mod transport;
 pub mod worker_manager;
-
-pub use server::McpServer;
-pub use transport::StdioTransport;
-pub use worker_manager::WorkerManager;

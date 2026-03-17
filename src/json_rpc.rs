@@ -1,14 +1,8 @@
-// Copyright Motia LLC and/or licensed to Motia LLC under one or more
-// contributor license agreements. Licensed under the Elastic License 2.0;
-// you may not use this file except in compliance with the Elastic License 2.0.
-// This software is patent protected. We welcome discussions - reach out at support@motia.dev
-// See LICENSE and PATENTS files for details.
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const JSONRPC_VERSION: &str = "2.0";
-pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -40,10 +34,7 @@ pub struct JsonRpcError {
 }
 
 pub const PARSE_ERROR: i32 = -32700;
-#[allow(dead_code)]
-pub const INVALID_REQUEST: i32 = -32600;
 pub const METHOD_NOT_FOUND: i32 = -32601;
-#[allow(dead_code)]
 pub const INVALID_PARAMS: i32 = -32602;
 pub const INTERNAL_ERROR: i32 = -32603;
 
@@ -67,45 +58,6 @@ impl JsonRpcResponse {
                 message: message.into(),
                 data: None,
             }),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn error_with_data(
-        id: Option<Value>,
-        code: i32,
-        message: impl Into<String>,
-        data: Value,
-    ) -> Self {
-        Self {
-            jsonrpc: JSONRPC_VERSION.to_string(),
-            id,
-            result: None,
-            error: Some(JsonRpcError {
-                code,
-                message: message.into(),
-                data: Some(data),
-            }),
-        }
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcNotification {
-    pub jsonrpc: String,
-    pub method: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<Value>,
-}
-
-impl JsonRpcNotification {
-    #[allow(dead_code)]
-    pub fn new(method: impl Into<String>, params: Option<Value>) -> Self {
-        Self {
-            jsonrpc: JSONRPC_VERSION.to_string(),
-            method: method.into(),
-            params,
         }
     }
 }
