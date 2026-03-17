@@ -1,9 +1,3 @@
-// Copyright Motia LLC and/or licensed to Motia LLC under one or more
-// contributor license agreements. Licensed under the Elastic License 2.0;
-// you may not use this file except in compliance with the Elastic License 2.0.
-// This software is patent protected. We welcome discussions - reach out at support@motia.dev
-// See LICENSE and PATENTS files for details.
-
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -61,9 +55,13 @@ impl WorkerManager {
         }
     }
 
-    pub async fn create_worker(&self, params: WorkerCreateParams) -> Result<WorkerCreateResult, String> {
-        let worker_id = format!("worker-{}", Uuid::new_v4().to_string()[..8].to_string());
-        
+    pub async fn create_worker(
+        &self,
+        params: WorkerCreateParams,
+    ) -> Result<WorkerCreateResult, String> {
+        let uuid = Uuid::new_v4().to_string();
+        let worker_id = format!("worker-{}", &uuid[..8]);
+
         let temp_dir = std::env::temp_dir().join(format!("iii-{}", &worker_id));
         tokio::fs::create_dir_all(&temp_dir)
             .await
@@ -86,10 +84,12 @@ impl WorkerManager {
             .await
             .map_err(|e| format!("Failed to write worker file: {}", e))?;
 
-        let child = self.spawn_worker(&params.language, &temp_dir, file_name).await?;
-        
+        let child = self
+            .spawn_worker(&params.language, &temp_dir, file_name)
+            .await?;
+
         let pid = child.id().unwrap_or(0);
-        
+
         let spawned = SpawnedWorker {
             id: worker_id.clone(),
             language: params.language.clone(),
@@ -98,7 +98,10 @@ impl WorkerManager {
             pid,
         };
 
-        self.workers.lock().await.insert(worker_id.clone(), (spawned, child));
+        self.workers
+            .lock()
+            .await
+            .insert(worker_id.clone(), (spawned, child));
 
         tracing::info!(
             worker_id = %worker_id,
@@ -116,7 +119,7 @@ impl WorkerManager {
 
     pub async fn stop_worker(&self, params: WorkerStopParams) -> Result<WorkerStopResult, String> {
         let mut workers = self.workers.lock().await;
-        
+
         if let Some((info, mut child)) = workers.remove(&params.id) {
             if let Err(e) = child.kill().await {
                 tracing::warn!(worker_id = %params.id, error = %e, "Failed to kill worker process");
@@ -137,120 +140,92 @@ impl WorkerManager {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn list_workers(&self) -> Vec<SpawnedWorker> {
-        self.workers
-            .lock()
-            .await
-            .values()
-            .map(|(info, _)| info.clone())
-            .collect()
-    }
-
     fn generate_node_worker(&self, params: &WorkerCreateParams) -> String {
-        let description = params.description.as_deref().unwrap_or("Auto-generated function");
-        
-        format!(r#"// Auto-generated iii-engine worker
-import {{ Bridge }} from '@iii-dev/sdk';
+        let description = params
+            .description
+            .as_deref()
+            .unwrap_or("Auto-generated function");
 
-const bridge = new Bridge('{}');
+        format!(
+            r#"import {{ registerWorker, Logger }} from 'iii-sdk'
 
-// User-provided function code
-const handler = {};
+const iii = registerWorker('{}')
+const logger = new Logger()
 
-// Register the function
-bridge.registerFunction('{}', handler, '{}');
+const handler = {}
 
-// Keep process alive
-bridge.onFunctionsAvailable(() => {{
-  console.log('Function registered: {}');
-}});
+iii.registerFunction({{ id: '{}', description: '{}' }}, handler)
 
-// Handle shutdown
+logger.info('Function registered: {}')
+
 process.on('SIGTERM', () => {{
-  console.log('Worker shutting down');
-  process.exit(0);
-}});
+  logger.info('Worker shutting down')
+  process.exit(0)
+}})
 process.on('SIGINT', () => {{
-  console.log('Worker interrupted');
-  process.exit(0);
-}});
+  logger.info('Worker interrupted')
+  process.exit(0)
+}})
 "#,
-            self.engine_url,
-            params.code,
-            params.function_name,
-            description,
-            params.function_name
+            self.engine_url, params.code, params.function_name, description, params.function_name
         )
     }
 
     fn generate_python_worker(&self, params: &WorkerCreateParams) -> String {
-        let description = params.description.as_deref().unwrap_or("Auto-generated function");
-        
-        format!(r#"# Auto-generated iii-engine worker
-import asyncio
+        let description = params
+            .description
+            .as_deref()
+            .unwrap_or("Auto-generated function");
+
+        format!(
+            r#"import asyncio
 import signal
-from iii import Bridge
+from iii_sdk import register_worker, Logger
 
-bridge = Bridge('{}')
+iii = register_worker('{}')
+logger = Logger()
 
-# User-provided function code
-handler = {}
+{}
 
-# Register the function
-bridge.register_function('{}', handler, '{}')
+iii.register_function('{}', handler, '{}')
 
 def shutdown(sig, frame):
-    print('Worker shutting down')
+    logger.info('Worker shutting down')
     exit(0)
 
 signal.signal(signal.SIGTERM, shutdown)
 signal.signal(signal.SIGINT, shutdown)
 
-# Keep process alive
 async def main():
-    await bridge.connect()
-    print('Function registered: {}')
+    logger.info('Function registered: {}')
     while True:
         await asyncio.sleep(1)
 
 asyncio.run(main())
 "#,
-            self.engine_url,
-            params.code,
-            params.function_name,
-            description,
-            params.function_name
+            self.engine_url, params.code, params.function_name, description, params.function_name
         )
     }
 
-    async fn spawn_worker(&self, language: &str, temp_dir: &PathBuf, file_name: &str) -> Result<Child, String> {
-        let file_path = temp_dir.join(file_name);
-        
-        let child = match language {
-            "node" | "javascript" | "js" => {
-                Command::new("node")
-                    .arg(&file_path)
-                    .current_dir(temp_dir)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .kill_on_drop(true)
-                    .spawn()
-                    .map_err(|e| format!("Failed to spawn node process: {}", e))?
-            }
-            "python" | "py" => {
-                Command::new("python3")
-                    .arg(&file_path)
-                    .current_dir(temp_dir)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .kill_on_drop(true)
-                    .spawn()
-                    .map_err(|e| format!("Failed to spawn python process: {}", e))?
-            }
+    async fn spawn_worker(
+        &self,
+        language: &str,
+        temp_dir: &PathBuf,
+        file_name: &str,
+    ) -> Result<Child, String> {
+        let cmd = match language {
+            "node" | "javascript" | "js" => "node",
+            "python" | "py" => "python3",
             _ => return Err(format!("Unsupported language: {}", language)),
         };
 
-        Ok(child)
+        Command::new(cmd)
+            .arg(temp_dir.join(file_name))
+            .current_dir(temp_dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("Failed to spawn {} process: {}", cmd, e))
     }
 }

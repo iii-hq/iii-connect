@@ -1,48 +1,29 @@
-// Copyright Motia LLC and/or licensed to Motia LLC under one or more
-// contributor license agreements. Licensed under the Elastic License 2.0;
-// you may not use this file except in compliance with the Elastic License 2.0.
-// This software is patent protected. We welcome discussions - reach out at support@motia.dev
-// See LICENSE and PATENTS files for details.
-
-mod handlers;
+mod a2a;
 mod json_rpc;
-mod server;
+mod mcp;
 mod transport;
 mod worker_manager;
 
 use std::sync::Arc;
 
 use clap::Parser;
-use iii_sdk::Bridge;
+use iii_sdk::{InitOptions, register_worker};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use server::McpServer;
-use transport::StdioTransport;
-
 #[derive(Parser, Debug)]
-#[command(name = "iii-mcp")]
+#[command(name = "iii-connect")]
 #[command(version)]
-#[command(about = "MCP (Model Context Protocol) server for iii-engine")]
+#[command(about = "MCP and A2A protocol worker for iii-engine")]
 #[command(long_about = r#"
-iii-mcp connects to an iii-engine instance and exposes its capabilities
-through the Model Context Protocol (MCP).
+iii-connect is an iii worker that registers protocol handlers as iii functions.
 
-This allows AI assistants like Claude Desktop and Cursor to:
-- Invoke iii-engine functions
-- Manage state
-- Emit events
-- List workers, functions, and triggers
+Every MCP and A2A request flows through the engine — full observability,
+any language can extend it, all functions are protocol-consumable.
 
-Usage with Claude Desktop:
-  Add to claude_desktop_config.json:
-  {
-    "mcpServers": {
-      "iii": {
-        "command": "iii-mcp",
-        "args": ["--engine-url", "ws://localhost:49134"]
-      }
-    }
-  }
+Modes:
+  iii-connect                  MCP stdio (Claude Desktop, Cursor)
+  iii-connect --a2a            MCP stdio + A2A HTTP endpoints
+  iii-connect --a2a --no-stdio A2A HTTP only (headless, stays alive)
 "#)]
 struct Args {
     #[arg(long, short = 'e', default_value = "ws://localhost:49134")]
@@ -50,6 +31,12 @@ struct Args {
 
     #[arg(long, short = 'd')]
     debug: bool,
+
+    #[arg(long, help = "Register A2A endpoints")]
+    a2a: bool,
+
+    #[arg(long, help = "Skip stdio transport (for headless/HTTP-only mode)")]
+    no_stdio: bool,
 }
 
 #[tokio::main]
@@ -57,9 +44,9 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let filter = if args.debug {
-        EnvFilter::new("iii_mcp=debug,iii_sdk=debug")
+        EnvFilter::new("iii_connect=debug,iii_sdk=debug")
     } else {
-        EnvFilter::new("iii_mcp=info,iii_sdk=warn")
+        EnvFilter::new("iii_connect=info,iii_sdk=warn")
     };
 
     tracing_subscriber::registry()
@@ -70,19 +57,29 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         engine_url = %args.engine_url,
-        "Starting iii-mcp server"
+        a2a = args.a2a,
+        no_stdio = args.no_stdio,
+        "Starting iii-connect"
     );
 
-    let bridge = Bridge::new(&args.engine_url);
+    let iii = register_worker(&args.engine_url, InitOptions::default());
 
-    tracing::info!("Connecting to iii-engine at {}", args.engine_url);
-    bridge.connect().await?;
-    tracing::info!("Connected to iii-engine");
+    mcp::McpHandler::register(&iii);
 
-    let server = Arc::new(McpServer::new(bridge, args.engine_url.clone()));
+    if args.a2a {
+        a2a::A2AHandler::register(&iii);
+    }
 
-    StdioTransport::run(server).await?;
+    if args.no_stdio {
+        tracing::info!(
+            "Running headless (no stdio). Functions registered on engine. Ctrl+C to stop."
+        );
+        tokio::signal::ctrl_c().await?;
+    } else {
+        let handler = Arc::new(mcp::McpHandler::new(iii, args.engine_url));
+        transport::StdioTransport::run(handler).await?;
+    }
 
-    tracing::info!("iii-mcp server stopped");
+    tracing::info!("iii-connect stopped");
     Ok(())
 }

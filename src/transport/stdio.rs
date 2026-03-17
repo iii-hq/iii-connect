@@ -1,34 +1,34 @@
-// Copyright Motia LLC and/or licensed to Motia LLC under one or more
-// contributor license agreements. Licensed under the Elastic License 2.0;
-// you may not use this file except in compliance with the Elastic License 2.0.
-// This software is patent protected. We welcome discussions - reach out at support@motia.dev
-// See LICENSE and PATENTS files for details.
-
 use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 
-use crate::json_rpc::{JsonRpcRequest, JsonRpcResponse, PARSE_ERROR};
-use crate::server::McpServer;
+use crate::json_rpc::{JsonRpcResponse, PARSE_ERROR};
+use crate::mcp::McpHandler;
 
 pub struct StdioTransport;
 
 impl StdioTransport {
-    pub async fn run(server: Arc<McpServer>) -> anyhow::Result<()> {
+    pub async fn run(handler: Arc<McpHandler>) -> anyhow::Result<()> {
         let stdin = tokio::io::stdin();
         let stdout = tokio::io::stdout();
 
         let mut reader = BufReader::new(stdin);
         let mut writer = BufWriter::new(stdout);
 
-        tracing::info!("MCP server started on stdio");
+        tracing::info!("stdio transport started");
 
         loop {
+            while let Some(notification) = handler.take_notification().await {
+                let _ = writer.write_all(notification.as_bytes()).await;
+                let _ = writer.write_all(b"\n").await;
+                let _ = writer.flush().await;
+            }
+
             let mut line = String::new();
 
             match reader.read_line(&mut line).await {
                 Ok(0) => {
-                    tracing::info!("stdin closed, shutting down");
+                    tracing::info!("stdin closed");
                     break;
                 }
                 Ok(_) => {
@@ -37,55 +37,44 @@ impl StdioTransport {
                         continue;
                     }
 
-                    let response = match serde_json::from_str::<JsonRpcRequest>(line) {
-                        Ok(request) => {
-                            let is_notification = request.id.is_none();
-
-                            let response = server.handle_request(request).await;
-
-                            if is_notification {
-                                continue;
-                            }
-
-                            response
-                        }
+                    let body: serde_json::Value = match serde_json::from_str(line) {
+                        Ok(v) => v,
                         Err(err) => {
-                            tracing::warn!(error = %err, "Failed to parse JSON-RPC request");
-                            JsonRpcResponse::error(
+                            tracing::warn!(error = %err, "Parse error");
+                            let r = JsonRpcResponse::error(
                                 None,
                                 PARSE_ERROR,
                                 format!("Parse error: {}", err),
-                            )
+                            );
+                            write_response(&mut writer, &serde_json::to_value(&r).unwrap()).await;
+                            continue;
                         }
                     };
 
-                    match serde_json::to_string(&response) {
-                        Ok(json) => {
-                            if let Err(err) = writer.write_all(json.as_bytes()).await {
-                                tracing::error!(error = %err, "Failed to write response");
-                                break;
-                            }
-                            if let Err(err) = writer.write_all(b"\n").await {
-                                tracing::error!(error = %err, "Failed to write newline");
-                                break;
-                            }
-                            if let Err(err) = writer.flush().await {
-                                tracing::error!(error = %err, "Failed to flush stdout");
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!(error = %err, "Failed to serialize response");
-                        }
-                    }
+                    let Some(response) = handler.handle(body).await else {
+                        continue;
+                    };
+
+                    write_response(&mut writer, &response).await;
                 }
                 Err(err) => {
-                    tracing::error!(error = %err, "Failed to read from stdin");
+                    tracing::error!(error = %err, "stdin read error");
                     break;
                 }
             }
         }
 
         Ok(())
+    }
+}
+
+async fn write_response(writer: &mut BufWriter<tokio::io::Stdout>, response: &serde_json::Value) {
+    if let Ok(json) = serde_json::to_string(response) {
+        if writer.write_all(json.as_bytes()).await.is_err()
+            || writer.write_all(b"\n").await.is_err()
+            || writer.flush().await.is_err()
+        {
+            tracing::error!("Failed to write response");
+        }
     }
 }

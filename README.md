@@ -1,458 +1,290 @@
-# iii-mcp
+# iii-connect
 
-MCP (Model Context Protocol) server for [iii-engine](https://github.com/MotiaDev/iii-engine).
+An [iii-engine](https://github.com/iii-hq/iii) worker that makes every registered function available to AI agents through MCP and A2A protocols.
 
-## Overview
+Not a bridge. Not an adapter. A worker — it registers protocol handlers as iii functions, so every request flows through the engine with full observability, tracing, and state management.
 
-`iii-mcp` is a standalone Rust binary that connects to an iii-engine instance and exposes its capabilities through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). This allows AI assistants like Claude Desktop, Cursor, and VS Code Copilot to interact with iii-engine's three core primitives:
+## Why This Matters
 
-- **Worker** — Who runs code
-- **Function** — What code runs  
-- **Trigger** — What causes code to run
+iii-engine is built on three primitives: **Worker** (who runs code), **Function** (what code runs), **Trigger** (what causes code to run). Any worker can register functions in any language — Rust, Node.js, Python.
 
-AI agents can register workers, invoke functions, and register triggers — all without user intervention.
-
-## Architecture
+`iii-connect` registers protocol handlers as functions:
 
 ```mermaid
-flowchart LR
-    subgraph clients [MCP Clients]
-        Claude[Claude Desktop]
-        Cursor[Cursor IDE]
+flowchart TB
+    subgraph protocols [Agent Protocols]
+        MCP_STDIO[MCP stdio<br/>Claude Desktop / Cursor]
+        MCP_HTTP[MCP Streamable HTTP<br/>POST /mcp]
+        A2A_CARD[A2A Agent Card<br/>GET /.well-known/agent-card.json]
+        A2A_RPC[A2A JSON-RPC<br/>POST /a2a]
     end
 
-    subgraph mcpBinary [iii-mcp]
-        MCP[MCP Server]
-        WM[Worker Manager]
+    subgraph engine [iii-engine :49134 / :3111]
+        direction TB
+        MCP_FN["mcp::handler<br/><i>iii function</i>"]
+        A2A_CARD_FN["a2a::agent_card<br/><i>iii function</i>"]
+        A2A_RPC_FN["a2a::jsonrpc<br/><i>iii function</i>"]
+        TRIGGER["trigger()"]
+        STATE["state::set/get"]
+        EMIT["emit"]
+        STREAMS["streams"]
     end
 
-    Engine[iii-engine]
-    TempWorker[Temp Worker]
+    subgraph workers [Your Workers — Any Language]
+        NODE[Node.js Worker]
+        RUST[Rust Worker]
+        PYTHON[Python Worker]
+    end
 
-    Claude -->|MCP| MCP
-    Cursor -->|MCP| MCP
-    MCP -->|invoke| Engine
-    MCP -->|register trigger| Engine
-    WM -->|register| TempWorker
-    TempWorker -->|connects| Engine
+    MCP_STDIO -->|stdin/stdout| MCP_FN
+    MCP_HTTP -->|HTTP trigger| MCP_FN
+    A2A_CARD -->|HTTP trigger| A2A_CARD_FN
+    A2A_RPC -->|HTTP trigger| A2A_RPC_FN
+
+    MCP_FN --> TRIGGER
+    A2A_RPC_FN --> TRIGGER
+
+    TRIGGER --> NODE
+    TRIGGER --> RUST
+    TRIGGER --> PYTHON
+
+    A2A_RPC_FN --> STATE
+
+    style engine fill:#1a1a2e,color:#fff
+    style protocols fill:#16213e,color:#fff
+    style workers fill:#0f3460,color:#fff
 ```
 
-## The Three Primitives
+The power: a Python data scientist registers a function. A Rust systems engineer registers another. An agent calls both through MCP or A2A — same engine, same observability, zero glue code.
 
-iii-engine is built on three core primitives:
+## How It Works
 
-| Primitive | What it is | MCP Tools |
-|-----------|------------|-----------|
-| **Worker** | Who runs code | `iii_worker_register`, `iii_worker_stop` |
-| **Function** | What code runs | `tools/call` (invoke any function) |
-| **Trigger** | What causes code to run | `iii_trigger_register`, `iii_trigger_unregister` |
-| **Context** | What functions have access to | Logger, State, Events, Tracing tools |
+`iii-connect` is a Rust worker that calls `register_worker()` and registers three iii functions:
+
+| iii Function | HTTP Trigger | What It Does |
+|---|---|---|
+| `mcp::handler` | `POST /mcp` | Handles all MCP methods (tools, resources, prompts) |
+| `a2a::agent_card` | `GET /.well-known/agent-card.json` | Serves the A2A Agent Card with all skills |
+| `a2a::jsonrpc` | `POST /a2a` | Handles A2A methods (message/send, tasks/get, cancel, list) |
+
+Every request flows through the engine — you see it in traces, it hits the metrics, it uses the same state/events/streams as everything else.
 
 ```mermaid
-flowchart LR
-    Trigger[Trigger] -->|causes| Function[Function]
-    Function -->|runs on| Worker[Worker]
-    Function -->|has access to| Context[Context]
+sequenceDiagram
+    participant Agent as External Agent
+    participant Engine as iii-engine :3111
+    participant Connect as iii-connect worker
+    participant App as Your App Worker
+
+    Note over Agent,App: A2A: Agent discovers iii
+    Agent->>Engine: GET /.well-known/agent-card.json
+    Engine->>Connect: trigger(a2a::agent_card)
+    Connect->>Engine: list_functions()
+    Connect-->>Engine: AgentCard with 200+ skills
+    Engine-->>Agent: Agent Card
+
+    Note over Agent,App: A2A: Agent sends a task
+    Agent->>Engine: POST /a2a {method: "message/send"}
+    Engine->>Connect: trigger(a2a::jsonrpc)
+    Connect->>Engine: trigger(your_app::process, payload)
+    Engine->>App: Execute function
+    App-->>Engine: Result
+    Engine-->>Connect: Result
+    Connect->>Engine: state::set (store task)
+    Connect-->>Engine: {task: {status: "completed", artifacts: [...]}}
+    Engine-->>Agent: A2A Response
+
+    Note over Agent,App: MCP: Same function, different protocol
+    Agent->>Engine: POST /mcp {method: "tools/call", name: "your_app__process"}
+    Engine->>Connect: trigger(mcp::handler)
+    Connect->>Engine: trigger(your_app::process, payload)
+    Engine->>App: Same function
+    App-->>Engine: Same result
+    Connect-->>Engine: MCP tool result
+    Engine-->>Agent: MCP Response
 ```
 
-### Worker — Who Runs Code
+## Quick Start
 
-Workers are processes that connect to iii-engine and register functions they can execute.
-
-```
-iii_worker_register → Register a worker with iii-engine
-iii_worker_stop     → Stop and cleanup a worker
-```
-
-### Function — What Code Runs
-
-Functions are the units of work. Each function has a path (e.g., `myservice.process_order`) and runs on a worker.
-
-```
-tools/call          → Invoke any registered function
-tools/list          → List all available functions
-```
-
-### Trigger — What Causes Code to Run
-
-Triggers wire up automation: "when X happens, call function Y".
-
-```
-iii_trigger_register    → Register a trigger (cron, event, api, state)
-iii_trigger_unregister  → Remove a trigger
-```
-
-### Context — What Functions Have Access To
-
-Context is the runtime environment available to functions during execution. It's nested under Function conceptually — it represents what a function can use when it runs.
-
-```mermaid
-flowchart TD
-    Function[Function] --> Context[Context]
-    Context --> Logger[Logger]
-    Context --> State[State]
-    Context --> Events[Events]
-    Context --> Tracing[Tracing]
-    Context --> Streams[Streams]
-```
-
-| Context Capability | Available Tools |
-|-------------------|-----------------|
-| **Logger** | `engine_log_info`, `engine_log_debug`, `engine_log_warn`, `engine_log_error`, `engine_log_trace` |
-| **State** | `state_get`, `state_set`, `state_delete`, `state_update`, `state_list` |
-| **Events** | `emit`, `publish` |
-| **Tracing** | `engine_baggage_get`, `engine_baggage_set`, `engine_baggage_getAll` |
-| **Streams** | `streams_get`, `streams_set`, `streams_delete`, `streams_update`, `streams_list`, `streams_getGroup`, `streams_listGroups` |
-
-## MCP Tools
-
-### Built-in Tools (Core Primitives)
-
-| Tool | Primitive | Description |
-|------|-----------|-------------|
-| `iii_worker_register` | Worker | Register a worker with iii-engine |
-| `iii_worker_stop` | Worker | Stop a registered worker and clean up |
-| `iii_trigger_register` | Trigger | Register a trigger to invoke a function |
-| `iii_trigger_unregister` | Trigger | Remove a registered trigger |
-
-### iii-engine Functions
-
-All iii-engine functions are automatically exposed as MCP tools:
-
-**State Operations:**
-- `state_set` - Set a value in state
-- `state_get` - Get a value from state
-- `state_delete` - Delete a value from state
-- `state_update` - Update a value in state
-- `state_list` - List all values in a group
-
-**Event Operations:**
-- `emit` - Emit an event to a topic
-
-**Engine Introspection:**
-- `engine_functions_list` - List all registered functions
-- `engine_workers_list` - List all connected workers with metrics
-- `engine_triggers_list` - List all active triggers
-
-**Custom Functions:**
-- Any functions registered by workers are automatically exposed as tools
-
-### MCP Resources
-
-Read-only access to iii-engine data:
-
-| Resource URI | Description |
-|--------------|-------------|
-| `iii://functions` | List of all registered functions |
-| `iii://workers` | Connected workers with metrics |
-| `iii://triggers` | Active triggers |
-| `iii://context` | Runtime context capabilities (logging, state, events, tracing) |
-
-## Installation
-
-### Quick Install (Linux/macOS)
+### Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MotiaDev/iii-mcp/main/install.sh | bash
+cargo install --git https://github.com/iii-hq/iii-connect
 ```
 
-Or with a custom install directory:
+### Run
 
 ```bash
-INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/MotiaDev/iii-mcp/main/install.sh | bash
+iii-connect                        # MCP stdio (Claude Desktop, Cursor)
+iii-connect --a2a                  # MCP stdio + A2A on engine HTTP
+iii-connect --a2a --no-stdio       # headless, HTTP only
 ```
-
-### Prerequisites
-
-- A running iii-engine instance
-- For building from source: Rust 1.85+ (with 2024 edition support)
-
-### Build from Source
-
-```bash
-# Clone the repository
-git clone https://github.com/MotiaDev/iii-mcp.git
-cd iii-mcp
-
-# Build release version
-cargo build --release
-
-# Binary will be at target/release/iii-mcp
-```
-
-### Using Cargo Install
-
-```bash
-cargo install --path .
-```
-
-## Usage
-
-### Command Line
-
-```bash
-# Connect to local iii-engine (default: ws://localhost:49134)
-iii-mcp
-
-# Connect to a specific iii-engine instance
-iii-mcp --engine-url ws://192.168.1.100:8080
-
-# With debug logging (logs to stderr)
-iii-mcp --engine-url ws://localhost:49134 --debug
-```
-
-### CLI Options
-
-```
-Usage: iii-mcp [OPTIONS]
-
-Options:
-  -e, --engine-url <ENGINE_URL>  iii-engine WebSocket URL [default: ws://localhost:49134]
-  -d, --debug                    Enable debug logging
-  -h, --help                     Print help
-  -V, --version                  Print version
-```
-
-## Configuration
 
 ### Claude Desktop
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
 ```json
 {
   "mcpServers": {
     "iii": {
-      "command": "/path/to/iii-mcp",
+      "command": "iii-connect",
       "args": ["--engine-url", "ws://localhost:49134"]
     }
   }
 }
 ```
 
-### Cursor IDE
-
-Add to your Cursor MCP configuration:
+### Cursor / VS Code
 
 ```json
 {
   "mcpServers": {
     "iii": {
-      "command": "/path/to/iii-mcp",
-      "args": ["--engine-url", "ws://localhost:49134"]
+      "command": "iii-connect"
     }
   }
 }
 ```
 
-## Examples
+## Three Protocols, One Engine
 
-Once configured, you can interact with iii-engine through natural language:
+### MCP (Model Context Protocol)
 
-### List Available Functions
+**Spec:** 2025-11-25 | **Transports:** stdio + Streamable HTTP (`POST /mcp`)
 
-**User:** "What functions are available in iii-engine?"
+Every iii function becomes an MCP tool automatically. Function ID `state::set` becomes tool name `state__set`.
 
-**AI:** *calls `tools/list`*
-```
-Available tools:
-- state_set: Set a value in state
-- state_get: Get a value from state
-- emit: Emit an event
-- engine_functions_list: List all functions
-- myapp_process_order: Process an order (from worker)
-...
-```
+| MCP Feature | Status |
+|---|---|
+| tools/list, tools/call | All engine functions exposed |
+| resources/list, resources/read | functions, workers, triggers, context |
+| prompts/list, prompts/get | register-function, build-api, setup-cron, event-pipeline |
+| notifications/tools/list_changed | Live updates when functions change |
+| Streamable HTTP | POST /mcp on engine port |
 
-### Manage State
+### A2A (Agent-to-Agent Protocol)
 
-**User:** "Set user 123's name to John in the users state group"
+**Spec:** v0.3 (v1.0 method names accepted) | **Transport:** HTTP on engine port
 
-**AI:** *calls `state_set` tool*
-```json
-{
-  "name": "state_set",
-  "arguments": {
-    "group_id": "users",
-    "item_id": "123",
-    "data": {"name": "John", "email": "john@example.com"}
-  }
-}
-```
-→ Success
+Every iii function becomes an A2A skill. Agents discover iii via the standard Agent Card.
 
-### Emit Events
+| A2A Feature | Status |
+|---|---|
+| Agent Card | `GET /.well-known/agent-card.json` |
+| message/send (SendMessage) | Sync function invocation → Task result |
+| tasks/get (GetTask) | Poll task state from iii KV |
+| tasks/cancel (CancelTask) | Cancel with terminal state check |
+| tasks/list (ListTasks) | List all tasks from iii KV |
+| Task state | Stored in `state::set/get` (scope: `a2a:tasks`) |
+| ISO 8601 timestamps | Compliant |
+| Response envelope | `{"task": {...}}` wrapper |
 
-**User:** "Emit an order.created event for order 456"
+### Built-in MCP Tools
 
-**AI:** *calls `emit` tool*
-```json
-{
-  "name": "emit",
-  "arguments": {
-    "topic": "order.created",
-    "data": {"order_id": "456", "total": 99.99}
-  }
-}
-```
-→ Event emitted
+| Tool | Description |
+|---|---|
+| `iii_worker_register` | Spawn a Node.js or Python worker on the fly |
+| `iii_worker_stop` | Stop a spawned worker |
+| `iii_trigger_register` | Wire a function to http/cron/queue trigger |
+| `iii_trigger_unregister` | Remove a trigger |
+| `iii_trigger_void` | Fire-and-forget invocation |
+| `iii_trigger_enqueue` | Route through named queue |
 
-### Inspect Workers
+## The iii Advantage
 
-**User:** "Show me all connected workers"
+### Write once, expose everywhere
 
-**AI:** *calls `engine_workers_list` tool*
-```
-Connected workers:
-1. worker-abc (Node.js)
-   - Status: Available
-   - Functions: myapp.process_order, myapp.send_notification
-   - Active invocations: 2
+Register a function in any language. It's instantly available via MCP AND A2A. No protocol-specific code needed.
 
-2. worker-def (Python)
-   - Status: Busy
-   - Functions: ml.predict, ml.train
-   - Active invocations: 1
+```js
+import { registerWorker } from 'iii-sdk'
+const iii = registerWorker('ws://localhost:49134')
+
+iii.registerFunction({ id: 'orders::process' }, async (input) => {
+  return { orderId: input.id, status: 'processed' }
+})
+
+iii.registerTrigger({
+  type: 'http',
+  functionId: 'orders::process',
+  config: { api_path: '/orders', http_method: 'POST' }
+})
 ```
 
-### Register a Worker
+Now an MCP client calls `orders__process` and an A2A agent calls it via `message/send` — same function, same result, same traces.
 
-**User:** "Register a worker with a timestamp function"
+### Full observability
 
-**AI:** *calls `iii_worker_register` tool*
-```json
-{
-  "name": "iii_worker_register",
-  "arguments": {
-    "language": "node",
-    "function_name": "utils.timestamp",
-    "code": "async (args) => ({ timestamp: Date.now(), iso: new Date().toISOString() })",
-    "description": "Returns current timestamp"
-  }
-}
+Every protocol request is an iii function invocation. You see it in:
+- Engine logs (structured, with trace correlation)
+- OpenTelemetry traces (distributed tracing across workers)
+- Prometheus metrics (invocation count, duration, status)
+- iii Console (real-time function calls, worker health)
+
+### Dynamic at runtime
+
+An AI agent can use `iii_worker_register` to spawn new workers, `iii_trigger_register` to wire them up — extending its own capabilities at runtime. The new functions immediately appear in both MCP `tools/list` and the A2A Agent Card.
+
+### Trigger Actions
+
+Three routing modes for every function:
+
 ```
-→ Worker registered, function `utils.timestamp` is now available
-
-### Register a Trigger
-
-**User:** "Call the cleanup function every hour"
-
-**AI:** *calls `iii_trigger_register` tool*
-```json
-{
-  "name": "iii_trigger_register",
-  "arguments": {
-    "trigger_type": "cron",
-    "function_path": "maintenance.cleanup",
-    "config": { "schedule": "0 * * * *" }
-  }
-}
-```
-→ Trigger registered, function will be called hourly
-
-## Testing
-
-### Using MCP Inspector
-
-```bash
-npx @anthropic/mcp-inspector ./target/release/iii-mcp --engine-url ws://localhost:49134
-```
-
-### Manual Testing
-
-```bash
-# Start iii-mcp
-./target/release/iii-mcp --engine-url ws://localhost:49134
-
-# Send initialize request (in another terminal)
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test"}}}' | nc localhost 49134
-
-# List tools
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | nc localhost 49134
+Sync (default)  →  Wait for result         →  tools/call, message/send
+Void            →  Fire-and-forget         →  iii_trigger_void
+Enqueue         →  Route through queue     →  iii_trigger_enqueue
 ```
 
 ## Project Structure
 
 ```
-iii-mcp/
-├── Cargo.toml              # Package manifest
-├── README.md               # This file
+iii-connect/
+├── Cargo.toml
+├── README.md
 └── src/
-    ├── main.rs             # Entry point with CLI
-    ├── lib.rs              # Library exports
-    ├── server.rs           # MCP server + request routing
-    ├── json_rpc.rs         # JSON-RPC 2.0 types
-    ├── handlers/
-    │   ├── mod.rs          # Handler exports
-    │   ├── initialize.rs   # MCP initialization
-    │   ├── tools.rs        # tools/list, tools/call + core primitives
-    │   └── resources.rs    # resources/list, resources/read
-    ├── worker_manager/
-    │   └── mod.rs          # Register/stop workers
-    └── transport/
-        ├── mod.rs          # Transport exports
-        └── stdio.rs        # stdio transport implementation
+    ├── main.rs              # CLI, register_worker(), mode selection
+    ├── lib.rs
+    ├── json_rpc.rs          # Shared JSON-RPC 2.0 types (MCP + A2A)
+    ├── mcp/
+    │   ├── handler.rs       # mcp::handler function + MCP logic
+    │   ├── prompts.rs       # 4 guided workflows
+    │   └── mod.rs
+    ├── a2a/
+    │   ├── handler.rs       # a2a::agent_card + a2a::jsonrpc functions
+    │   ├── types.rs         # AgentCard, Task, Message, Part, Artifact
+    │   └── mod.rs
+    ├── transport/
+    │   └── stdio.rs         # stdin → handler.handle() → stdout
+    └── worker_manager/
+        └── mod.rs           # Spawn ephemeral Node.js/Python workers
 ```
 
-## How It Works
+12 files. 1,673 lines. 3.8MB binary. Zero external HTTP dependencies.
 
-```mermaid
-sequenceDiagram
-    participant Client as MCP Client
-    participant MCP as iii-mcp
-    participant Engine as iii-engine
-    participant Worker as Worker
+## Testing
 
-    Note over Client,Worker: Initialization
-    Client->>MCP: initialize
-    MCP->>Engine: Connect via WebSocket
-    Engine-->>MCP: Connected
-    MCP-->>Client: capabilities
-
-    Note over Client,Worker: Tool Discovery
-    Client->>MCP: tools/list
-    MCP->>Engine: list_functions()
-    Engine-->>MCP: Functions list
-    MCP-->>Client: MCP Tools
-
-    Note over Client,Worker: Tool Invocation
-    Client->>MCP: tools/call state_set
-    MCP->>Engine: invoke_function state.set
-    Engine->>Worker: Execute function
-    Worker-->>Engine: Result
-    Engine-->>MCP: Result
-    MCP-->>Client: Tool result
+```bash
+npx @anthropic/mcp-inspector iii-connect --engine-url ws://localhost:49134
 ```
 
-### Flow Explained
+```bash
+curl http://localhost:3111/.well-known/agent-card.json
 
-1. **Connection**: `iii-mcp` connects to iii-engine via WebSocket using the `iii-sdk`
-2. **Discovery**: When an MCP client requests `tools/list`, `iii-mcp` calls `bridge.list_functions()` and converts each function to an MCP tool
-3. **Invocation**: When an MCP client calls a tool, `iii-mcp` translates the tool name back to a function path and calls `bridge.invoke_function()`
-4. **Resources**: Resource reads are translated to appropriate iii-engine queries
+curl -X POST http://localhost:3111/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 
-### Tool Name Conversion
-
-```
-MCP tool name          →  iii-engine function
-─────────────────────────────────────────────
-state_set              →  state.set
-state_get              →  state.get
-emit                   →  emit
-engine_workers_list    →  engine.workers.list
-myapp_process_order    →  myapp.process_order
+curl -X POST http://localhost:3111/a2a \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"messageId":"m1","role":"user","parts":[{"data":{"function_id":"state::set","payload":{"scope":"test","key":"x","data":{"ok":true}}}}]}}}'
 ```
 
-## Related Projects
+## Related
 
-- [iii-engine](https://github.com/MotiaDev/iii-engine) - The core engine
-- [iii-sdk](https://github.com/MotiaDev/iii-engine/tree/main/packages/rust/iii) - Rust SDK for iii-engine
-- [@iii-dev/sdk](https://www.npmjs.com/package/@iii-dev/sdk) - Node.js SDK for iii-engine
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+- [iii-engine](https://github.com/iii-hq/iii) — Worker/Function/Trigger engine
+- [iii-sdk (crates.io)](https://crates.io/crates/iii-sdk) — Rust SDK v0.9.0
+- [iii-sdk (npm)](https://www.npmjs.com/package/iii-sdk) — Node.js SDK v0.9.0
+- [iii-sdk (PyPI)](https://pypi.org/project/iii-sdk/) — Python SDK
 
 ## License
 
-Elastic License 2.0 - See [LICENSE](https://github.com/MotiaDev/iii-engine/blob/main/LICENSE) file for details.
+Apache License 2.0
