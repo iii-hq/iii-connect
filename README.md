@@ -55,7 +55,7 @@ flowchart TB
     style workers fill:#0f3460,color:#fff
 ```
 
-The power: a Python data scientist registers a function. A Rust systems engineer registers another. An agent calls both through MCP or A2A — same engine, same observability, zero glue code.
+A Python data scientist registers a function. A Rust systems engineer registers another. An agent calls both through MCP or A2A — same engine, same observability, no extra code.
 
 ## How It Works
 
@@ -190,7 +190,7 @@ Every iii function becomes an A2A skill. Agents discover iii via the standard Ag
 |---|---|
 | `iii_worker_register` | Spawn a Node.js or Python worker on the fly |
 | `iii_worker_stop` | Stop a spawned worker |
-| `iii_trigger_register` | Wire a function to http/cron/queue trigger |
+| `iii_trigger_register` | Attach an http/cron/queue trigger to a function |
 | `iii_trigger_unregister` | Remove a trigger |
 | `iii_trigger_void` | Fire-and-forget invocation |
 | `iii_trigger_enqueue` | Route through named queue |
@@ -228,7 +228,7 @@ Every protocol request is an iii function invocation. You see it in:
 
 ### Dynamic at runtime
 
-An AI agent can use `iii_worker_register` to spawn new workers, `iii_trigger_register` to wire them up — extending its own capabilities at runtime. The new functions immediately appear in both MCP `tools/list` and the A2A Agent Card.
+An AI agent can use `iii_worker_register` to spawn new workers, `iii_trigger_register` to add triggers — extending its own capabilities at runtime. New functions immediately appear in both MCP `tools/list` and the A2A Agent Card.
 
 ### Trigger Actions
 
