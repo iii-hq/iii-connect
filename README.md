@@ -109,6 +109,12 @@ sequenceDiagram
 ### Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/iii-hq/iii-connect/main/install.sh | sh
+```
+
+Or with Cargo:
+
+```bash
 cargo install --git https://github.com/iii-hq/iii-connect
 ```
 
